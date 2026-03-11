@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+data/
+models/whisper_cache/
+models/yolov8n.pt
+vision_assistant.db
+*.log

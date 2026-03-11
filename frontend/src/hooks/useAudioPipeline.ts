@@ -16,6 +16,7 @@ export function useAudioPipeline(
   onBotInterrupt?: () => void
 ) {
   const [isListening, setIsListening] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(false);
   const [vadProb, setVadProb] = useState(0);
   const [speechState, setSpeechState] = useState<string>('quiet');
 
@@ -24,6 +25,7 @@ export function useAudioPipeline(
   const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const isBotSpeakingRef = useRef(false);
+  const isMicMutedRef = useRef(false);
   const accumulatorRef = useRef<Float32Array>(new Float32Array(0));
 
   const startListening = useCallback(async () => {
@@ -76,6 +78,7 @@ export function useAudioPipeline(
       processorNodeRef.current = scriptProcessor;
 
       scriptProcessor.onaudioprocess = (e) => {
+        if (isMicMutedRef.current) return;
         const inputData = e.inputBuffer.getChannelData(0);
         const chunk = new Float32Array(inputData);
 
@@ -102,6 +105,13 @@ export function useAudioPipeline(
     }
   }, [sendJson, onBotInterrupt]);
 
+  const toggleMicMute = useCallback(() => {
+    setIsMicMuted((prev) => {
+      isMicMutedRef.current = !prev;
+      return !prev;
+    });
+  }, []);
+
   const stopListening = useCallback(() => {
     sendJson({ event: 'stop' });
     setIsListening(false);
@@ -119,6 +129,8 @@ export function useAudioPipeline(
     audioCtxRef.current = null;
 
     accumulatorRef.current = new Float32Array(0);
+    isMicMutedRef.current = false;
+    setIsMicMuted(false);
   }, [sendJson]);
 
   const setBotSpeaking = useCallback((speaking: boolean) => {
@@ -132,6 +144,8 @@ export function useAudioPipeline(
 
   return {
     isListening,
+    isMicMuted,
+    toggleMicMute,
     vadProb,
     speechState,
     startListening,

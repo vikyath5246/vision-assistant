@@ -308,7 +308,7 @@ class VisionPipeline:
         })
 
         # Persist user turn to DB (clean text, not the injected context)
-        await self._persist_turn("user", final_text, frame_base64)
+        await self._persist_turn("user", final_text)
 
         # Send complete transcript to client (clean text)
         await self.ws.send_text(json.dumps({
@@ -571,13 +571,9 @@ class VisionPipeline:
             logger.error("[tts] Error: %s", e)
             return False
 
-    async def _persist_turn(self, role: str, content: str, frame_base64: Optional[str] = None):
-        """Save turn to DB and optionally store frame to disk"""
+    async def _persist_turn(self, role: str, content: str):
+        """Save turn to DB."""
         try:
-            frame_path = None
-            if frame_base64 and role == "user":
-                frame_path = await self._save_frame(frame_base64)
-
             db = self.resources.db_session()
             try:
                 from db import crud
@@ -586,7 +582,6 @@ class VisionPipeline:
                     session_id=self.session_id,
                     role=role,
                     content=content,
-                    frame_path=frame_path,
                     stt_latency_ms=self._stt_latency_ms if role == "user" else None,
                     llm_first_token_ms=self._llm_first_token_ms if role == "assistant" else None,
                     tts_first_audio_ms=self._tts_first_audio_ms if role == "assistant" else None,
@@ -595,22 +590,6 @@ class VisionPipeline:
                 db.close()
         except Exception as e:
             logger.error("[pipeline] Failed to persist turn: %s", e)
-
-    async def _save_frame(self, frame_base64: str) -> Optional[str]:
-        """Save base64 JPEG frame to disk, return relative path"""
-        try:
-            import base64
-            os.makedirs(f"data/frames/{self.session_id}", exist_ok=True)
-            # Use turn count as filename
-            filename = f"data/frames/{self.session_id}/frame_{int(time.monotonic() * 1000)}.jpg"
-            img_bytes = base64.b64decode(frame_base64)
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: open(filename, "wb").write(img_bytes)
-            )
-            return filename
-        except Exception as e:
-            logger.error("[pipeline] Failed to save frame: %s", e)
-            return None
 
     async def _interrupt_response(self, notify_client: bool = False) -> bool:
         interrupted = False

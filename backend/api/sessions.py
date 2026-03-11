@@ -17,7 +17,6 @@ class TurnResponse(BaseModel):
     id: int
     role: str
     content: str
-    frame_path: Optional[str]
     stt_latency_ms: Optional[int]
     llm_first_token_ms: Optional[int]
     tts_first_audio_ms: Optional[int]
@@ -66,7 +65,6 @@ def get_session_turns(session_id: str, db: Session = Depends(get_db)):
             id=t.id,
             role=t.role,
             content=t.content,
-            frame_path=t.frame_path,
             stt_latency_ms=t.stt_latency_ms,
             llm_first_token_ms=t.llm_first_token_ms,
             tts_first_audio_ms=t.tts_first_audio_ms,

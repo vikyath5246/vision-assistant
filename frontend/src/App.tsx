@@ -12,6 +12,7 @@ import { VideoPreview } from './components/VideoPreview';
 import { AudioVisualizer } from './components/AudioVisualizer';
 import { ConversationThread } from './components/ConversationThread';
 import { StartButton } from './components/StartButton';
+import { MediaControls } from './components/MediaControls';
 import { MetricsDashboard } from './components/MetricsDashboard';
 
 import { MediaMessage, StateMessage, TextMessage } from './types/messages';
@@ -32,6 +33,8 @@ export default function App() {
   const [isBotResponding, setIsBotResponding] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [activeSessionCount, setActiveSessionCount] = useState(1);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const isCameraOffRef = useRef(false);
 
   // Ref bridge to avoid circular deps between TTS and audio pipeline
   const setBotSpeakingRef = useRef<((s: boolean) => void) | null>(null);
@@ -47,6 +50,8 @@ export default function App() {
 
   const audioPipeline = useAudioPipeline(sendJson, onBotInterrupt);
   const {
+    isMicMuted,
+    toggleMicMute,
     vadProb,
     speechState,
     startListening,
@@ -110,6 +115,10 @@ export default function App() {
     });
 
     const unsubCaptureFrame = onMessage('capture_frame', () => {
+      if (isCameraOffRef.current) {
+        sendJson({ event: 'frame', image: null, mime: 'image/jpeg' });
+        return;
+      }
       setIsCapturing(true);
       const frame = captureFrame();
       setTimeout(() => setIsCapturing(false), 300);
@@ -134,8 +143,21 @@ export default function App() {
     sendJson,
   ]);
 
+  const handleToggleCamera = useCallback(() => {
+    const nowOff = !isCameraOffRef.current;
+    isCameraOffRef.current = nowOff;
+    setIsCameraOff(nowOff);
+    if (nowOff) {
+      stopSceneFramePush();
+    } else {
+      startSceneFramePush((frame) => sendJson({ event: 'scene_frame', image: frame }));
+    }
+  }, [stopSceneFramePush, startSceneFramePush, sendJson]);
+
   const handleStart = useCallback(async () => {
     stopPlayback();
+    isCameraOffRef.current = false;
+    setIsCameraOff(false);
     await startCamera();
     await startListening();
     setIsActive(true);
@@ -150,6 +172,8 @@ export default function App() {
     stopPlayback();
     setIsActive(false);
     setIsBotResponding(false);
+    isCameraOffRef.current = false;
+    setIsCameraOff(false);
   }, [stopSceneFramePush, stopListening, stopCamera, stopPlayback]);
 
   return (
@@ -206,6 +230,14 @@ export default function App() {
             isConnected={isConnected}
             onStart={handleStart}
             onStop={handleStop}
+          />
+
+          <MediaControls
+            isActive={isActive}
+            isMicMuted={isMicMuted}
+            isCameraOff={isCameraOff}
+            onToggleMic={toggleMicMute}
+            onToggleCamera={handleToggleCamera}
           />
 
           <MetricsDashboard sessionId={sessionId} />

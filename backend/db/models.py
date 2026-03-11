@@ -23,7 +23,6 @@ class Turn(Base):
     session_id = Column(String, ForeignKey("sessions.id"), nullable=False)
     role = Column(String, nullable=False)           # "user" or "assistant"
     content = Column(Text, nullable=False)
-    frame_path = Column(String, nullable=True)      # Relative path to JPEG on disk
 
     # Performance metrics (Tier 2 observability)
     stt_latency_ms = Column(Integer, nullable=True)

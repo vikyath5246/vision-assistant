@@ -84,9 +84,8 @@ async def lifespan(app: FastAPI):
             logger.info("[startup] Scene detector ready (%.1fs)", time.monotonic() - start)
         except Exception as e:
             logger.error("[startup] Scene detector failed to load: %s", e)
-
-    # Ensure data directories exist
-    os.makedirs("data/frames", exist_ok=True)
+    else:
+        logger.info("[startup] Background scene processing disabled by config")
 
     app.state.resources = resources
     logger.info("=== Vision Assistant Ready ===\n")
