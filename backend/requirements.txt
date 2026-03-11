@@ -1,0 +1,30 @@
+# Web framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+websockets==12.0
+python-dotenv==1.0.0
+
+# Audio / VAD (cross-platform via onnxruntime)
+numpy>=1.26.0
+onnxruntime>=1.17.0
+transformers>=4.37.2
+
+# STT - cross-platform CPU inference (replaces mlx-whisper)
+faster-whisper>=1.0.0
+
+# Vision / LLM
+openai>=1.30.0
+Pillow==10.3.0
+
+# Background scene detection (YOLOv8n)
+ultralytics>=8.0.0
+
+# TTS - free Microsoft edge-tts (no API key)
+edge-tts==6.1.9
+pydub==0.25.1
+
+# Database
+sqlalchemy==2.0.29
+
+# Audio utilities
+soundfile==0.12.1
