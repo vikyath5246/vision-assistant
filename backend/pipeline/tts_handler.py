@@ -9,7 +9,9 @@ from config import (
     OPENAI_TTS_MODEL,
     OPENAI_TTS_VOICE,
     TTS_VOICE,
+    TTS_FALLBACK_VOICE,
     TTS_RATE,
+    ENABLE_OPENAI_TTS_FALLBACK,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,10 +48,10 @@ class EdgeTTSHandler:
 
         logger.info("EdgeTTS handler initialized (voice=%s)", voice)
 
-    async def _generate_with_edge_tts(self, text: str) -> bytes:
+    async def _generate_with_edge_tts(self, text: str, voice: str = None) -> bytes:
         try:
             import edge_tts
-            communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
+            communicate = edge_tts.Communicate(text, voice or self.voice, rate=self.rate)
             mp3_chunks = []
 
             async for chunk in communicate.stream():
@@ -93,15 +95,29 @@ class EdgeTTSHandler:
             return b""
 
     async def generate_speech_async(self, text: str) -> bytes:
-        """Generate WAV audio for text with edge-tts and OpenAI fallback."""
+        """Generate WAV audio for text with edge-tts and optional OpenAI fallback."""
         if not text.strip():
             return b""
 
+        # 1) Primary edge-tts voice
         audio = await self._generate_with_edge_tts(text)
         if audio:
             return audio
 
-        return await self._generate_with_openai_tts(text)
+        logger.warning("[tts] edge-tts primary voice failed, trying fallback voice: %s", TTS_FALLBACK_VOICE)
+
+        # 2) Edge fallback voice (don't mutate self.voice — keeps consistent voice across sentences)
+        audio = await self._generate_with_edge_tts(text, voice=TTS_FALLBACK_VOICE)
+        if audio:
+            return audio
+
+        # 3) OpenAI fallback only when configured and available
+        if ENABLE_OPENAI_TTS_FALLBACK and self._openai_client:
+            logger.warning("[tts] falling back to OpenAI TTS voice %s", OPENAI_TTS_VOICE)
+            return await self._generate_with_openai_tts(text)
+
+        logger.error("[tts] no audio generated from TTS pipeline (edge and fallback failed)")
+        return b""
 
     def generate_speech(self, text: str) -> bytes:
         """Synchronous wrapper for use in run_in_executor"""

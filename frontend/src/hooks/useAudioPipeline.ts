@@ -105,12 +105,47 @@ export function useAudioPipeline(
     }
   }, [sendJson, onBotInterrupt]);
 
+  const muteMicrophone = useCallback(() => {
+    if (isMicMutedRef.current) return;
+
+    // Stop local capture and inform backend to stop listening
+    isMicMutedRef.current = true;
+    setIsMicMuted(true);
+
+    sendJson({ event: 'stop' });
+    setIsListening(false);
+
+    processorNodeRef.current?.disconnect();
+    processorNodeRef.current = null;
+
+    workletNodeRef.current?.disconnect();
+    workletNodeRef.current = null;
+
+    micStreamRef.current?.getTracks().forEach((t) => t.stop());
+    micStreamRef.current = null;
+
+    audioCtxRef.current?.close();
+    audioCtxRef.current = null;
+
+    accumulatorRef.current = new Float32Array(0);
+  }, [sendJson]);
+
+  const unmuteMicrophone = useCallback(async () => {
+    if (!isMicMutedRef.current) return;
+
+    isMicMutedRef.current = false;
+    setIsMicMuted(false);
+
+    await startListening();
+  }, [startListening]);
+
   const toggleMicMute = useCallback(() => {
-    setIsMicMuted((prev) => {
-      isMicMutedRef.current = !prev;
-      return !prev;
-    });
-  }, []);
+    if (isMicMutedRef.current) {
+      unmuteMicrophone();
+    } else {
+      muteMicrophone();
+    }
+  }, [muteMicrophone, unmuteMicrophone]);
 
   const stopListening = useCallback(() => {
     sendJson({ event: 'stop' });

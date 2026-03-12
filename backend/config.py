@@ -48,10 +48,12 @@ MAX_CONVERSATION_IMAGE_HISTORY = 3  # Max frames kept in context (cost control)
 OPENAI_MAX_OUTPUT_TOKENS = 512
 
 # TTS
-TTS_VOICE = os.getenv("TTS_VOICE", "en-US-AriaNeural")
+TTS_VOICE = os.getenv("TTS_VOICE", "en-US-GuyNeural")
+TTS_FALLBACK_VOICE = os.getenv("TTS_FALLBACK_VOICE", "en-US-ChristopherNeural")
 TTS_RATE = os.getenv("TTS_RATE", "+0%")
 OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
+ENABLE_OPENAI_TTS_FALLBACK = os.getenv("ENABLE_OPENAI_TTS_FALLBACK", "true").lower() == "true"
 
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./vision_assistant.db")

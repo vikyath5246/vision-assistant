@@ -147,12 +147,18 @@ export default function App() {
     const nowOff = !isCameraOffRef.current;
     isCameraOffRef.current = nowOff;
     setIsCameraOff(nowOff);
+
     if (nowOff) {
       stopSceneFramePush();
+      stopCamera();
+      // Inform backend there is no camera frame available
+      sendJson({ event: 'frame', image: null, mime: 'image/jpeg' });
     } else {
-      startSceneFramePush((frame) => sendJson({ event: 'scene_frame', image: frame }));
+      startCamera().then(() => {
+        startSceneFramePush((frame) => sendJson({ event: 'scene_frame', image: frame }));
+      });
     }
-  }, [stopSceneFramePush, startSceneFramePush, sendJson]);
+  }, [stopSceneFramePush, startSceneFramePush, sendJson, startCamera, stopCamera]);
 
   const handleStart = useCallback(async () => {
     stopPlayback();
