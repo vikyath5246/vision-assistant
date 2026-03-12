@@ -77,7 +77,41 @@ def download_yolo():
     logger.info("YOLOv8n validation OK (%d detections on blank frame)", len(results[0].boxes))
 
 
+def download_onnx_models():
+    """Download silero_vad.onnx and smart_turn_v3.onnx if not already present."""
+    import urllib.request
+
+    models_dir = "models"
+    os.makedirs(models_dir, exist_ok=True)
+
+    files = {
+        "silero_vad.onnx": (
+            "https://raw.githubusercontent.com/snakers4/silero-vad/master"
+            "/src/silero_vad/data/silero_vad.onnx"
+        ),
+        "smart_turn_v3.onnx": (
+            "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main"
+            "/smart-turn-v3.0.onnx"
+        ),
+    }
+
+    for filename, url in files.items():
+        dest = os.path.join(models_dir, filename)
+        if os.path.exists(dest):
+            logger.info("%s already present, skipping download", filename)
+            continue
+        logger.info("Downloading %s ...", filename)
+        urllib.request.urlretrieve(url, dest)
+        logger.info("Saved %s (%.1f MB)", dest, os.path.getsize(dest) / 1e6)
+
+
 def main():
+    try:
+        download_onnx_models()
+    except Exception as e:
+        logger.error("ONNX model download failed: %s", e)
+        sys.exit(1)
+
     try:
         download_whisper()
     except Exception as e:
