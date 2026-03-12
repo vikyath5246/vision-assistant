@@ -1,24 +1,80 @@
 # Conversational Vision Assistant
 
-A voice-powered visual Q&A system: speak naturally while pointing your webcam at objects, and the assistant analyzes what it sees and responds in a real-time chat thread.
+A trade show / exhibition demo: visitors point their webcam at products and speak naturally. The assistant identifies what it sees, answers questions, and responds with synthesized voice — all in real time.
+
+## How It Works
+
+```
+Microphone → VAD (Silero) → EOU detection (SmartTurn) → Whisper STT
+                                                               ↓
+Webcam ──────────────────────────────────────────→ OpenAI gpt-4o-mini (vision)
+                                                               ↓
+                                              edge-tts / OpenAI TTS → Speaker
+                                                               ↓
+                                                     React chat thread
+```
+
+1. Silero VAD (ONNX) detects speech frames in real time
+2. SmartTurn EOU model (ONNX) decides when the visitor has finished speaking
+3. faster-whisper transcribes the captured segment
+4. The current webcam frame + transcript are sent to `gpt-4o-mini`
+5. The streamed response is spoken aloud and shown in the chat thread
+6. Full conversation history (last 3 frames) is kept in context for follow-ups
 
 ## Features
 
-- **Tier 1 (Core)**: Live webcam feed + microphone capture, VAD-based speech detection, Whisper transcription, OpenAI vision responses in chat thread
-- **Tier 2**: Conversation memory with visual context, TTS audio responses, SQLite persistence, real-time observability dashboard
-- **Tier 3**: Streaming text responses word-by-word, multi-session support
+- Real-time VAD + end-of-utterance detection (no push-to-talk)
+- Streaming LLM responses — text appears word-by-word
+- TTS audio responses (edge-tts primary, OpenAI TTS fallback)
+- Conversation memory with visual context across turns
+- SQLite session persistence
+- Live observability dashboard (SSE metrics stream)
+- Optional background scene detection via YOLOv8n
 
 ## Requirements
 
-- Python 3.10+
-- Node.js 18+
 - An [OpenAI API key](https://platform.openai.com/api-keys)
 - A webcam and microphone
 - Internet connection (for OpenAI API and edge-tts)
+- **Docker** (recommended) — or Python 3.10+ and Node.js 18+ for manual setup
 
 ## Setup
 
-### Backend
+### Docker (recommended)
+
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+```bash
+cd vision-assistant
+
+# Configure environment
+cp backend/.env.example backend/.env
+# Edit backend/.env and set your OPENAI_API_KEY
+
+# Build and start both services
+docker compose up --build
+```
+
+- Frontend: [http://localhost:3000](http://localhost:3000)
+- Backend API: [http://localhost:8000](http://localhost:8000)
+
+All models (Silero VAD, SmartTurn, faster-whisper, YOLOv8n) are downloaded during the backend image build. The first build takes a few minutes; subsequent builds use the cached layer.
+
+The backend starts first and must pass its `/health` check before the frontend container comes up. The SQLite database is stored in a named Docker volume (`app_data`) so it persists across restarts.
+
+```bash
+# Stop
+docker compose down
+
+# Stop and wipe the database volume
+docker compose down -v
+```
+
+---
+
+### Manual Setup
+
+#### Backend
 
 ```bash
 cd vision-assistant/backend
@@ -32,122 +88,125 @@ pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
-
-# Pre-download the Whisper model (~74MB, cached for future runs)
-python download_models.py
+# Edit .env and set your OPENAI_API_KEY
 
 # Start the backend
 python main.py
-# Backend runs on http://localhost:8000
+# Runs on http://localhost:8000
 ```
 
-### Frontend
+> The Silero VAD and SmartTurn ONNX models are downloaded automatically at startup if not present. The faster-whisper `base` model (~74 MB) is also downloaded on first run.
+
+#### Frontend
 
 ```bash
 cd vision-assistant/frontend
 
 npm install
 npm run dev
-# Frontend runs on http://localhost:5173
+# Runs on http://localhost:5173
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [http://localhost:5173](http://localhost:5173) in Chrome or Firefox.
 
 ## Usage
 
-1. Open the app in your browser
-2. Click **"Start Conversation"** — webcam and microphone activate
-3. Speak while pointing the camera at objects
-4. The system transcribes your speech, captures the current video frame, and responds in the chat thread
-5. Ask follow-up questions — the assistant remembers the full conversation
-6. Click **"Stop Conversation"** to end
-
-## Dependencies
-
-### Backend
-| Package | Version | Purpose |
-|---|---|---|
-| fastapi | 0.109.0 | Web framework |
-| uvicorn | 0.27.0 | ASGI server |
-| websockets | 12.0 | WebSocket support |
-| onnxruntime | 1.16.3 | VAD + EOU inference (cross-platform) |
-| transformers | 4.37.2 | Whisper feature extractor for EOU model |
-| faster-whisper | 1.0.3 | Speech-to-text (CPU, cross-platform) |
-| openai | >=1.30.0 | OpenAI vision API (gpt-4o-mini) |
-| Pillow | 10.3.0 | Image processing for vision API |
-| edge-tts | 6.1.9 | Text-to-speech (free, no API key) |
-| pydub | 0.25.1 | MP3→WAV conversion |
-| sqlalchemy | 2.0.29 | Database ORM |
-| python-dotenv | 1.0.0 | Environment variable loading |
-
-### Frontend
-| Package | Version | Purpose |
-|---|---|---|
-| react | 18.2 | UI framework |
-| vite | 5.1 | Build tool + dev server |
-| typescript | 5.3 | Type safety |
-
-## Project Structure
-
-```
-vision-assistant/
-├── backend/
-│   ├── main.py              # FastAPI app entry point
-│   ├── config.py            # All configuration constants
-│   ├── dependencies.py      # Shared singleton resources
-│   ├── pipeline/
-│   │   ├── vad_detector.py  # Silero VAD + SmartTurn EOU (ONNX)
-│   │   ├── audio_buffer.py  # Speech segmentation buffer
-│   │   ├── speech_detector.py # VAD state machine
-│   │   ├── transcriber.py   # faster-whisper STT
-│   │   ├── vision_pipeline.py # Per-session orchestrator
-│   │   └── tts_handler.py   # edge-tts TTS
-│   ├── vision/
-│   │   └── openai_client.py # OpenAI gpt-4o-mini vision client
-│   ├── db/                  # SQLAlchemy models + CRUD
-│   ├── api/                 # WebSocket, sessions, dashboard endpoints
-│   ├── models/              # ONNX model files (silero_vad, smart_turn_v3)
-│   └── requirements.txt
-├── frontend/
-│   └── src/
-│       ├── hooks/           # useWebSocket, useAudioPipeline, useVideoCapture, etc.
-│       ├── components/      # React UI components
-│       └── types/           # TypeScript message interfaces
-├── README.md
-└── ARCHITECTURE.md
-```
-
-## API Endpoints
-
-- `GET /health` — Component health status (VAD, transcriber, vision API, TTS, DB)
-- `WS /ws/{session_id}` — Main WebSocket for audio/video/text stream
-- `GET /api/sessions` — List all conversation sessions
-- `GET /api/sessions/{id}/turns` — Get conversation history for a session
-- `GET /dashboard/events` — SSE stream for real-time observability metrics
+1. Click **"Start Conversation"** — webcam and microphone activate
+2. Point the camera at an iPhone 17 or iPhone 17 Pro
+3. Ask a question naturally: *"What chip does this have?"*, *"How much does this cost?"*, *"What's the difference between these two?"*
+4. The assistant identifies the device, answers, and speaks the response
+5. Ask follow-ups — the assistant remembers the full conversation
+6. Click **"Stop Conversation"** to end the session
 
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
 | `OPENAI_API_KEY` | *(required)* | OpenAI API key |
-| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model (gpt-4o-mini or gpt-4o) |
-| `WHISPER_MODEL_SIZE` | `base` | STT model size: tiny/base/small |
-| `TTS_VOICE` | `en-US-AriaNeural` | edge-tts voice |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Vision model (`gpt-4o-mini` or `gpt-4o`) |
+| `WHISPER_MODEL_SIZE` | `base` | STT model size: `tiny` / `base` / `small` |
+| `TTS_VOICE` | `en-US-GuyNeural` | Primary edge-tts voice |
+| `TTS_FALLBACK_VOICE` | `en-US-ChristopherNeural` | Fallback edge-tts voice |
+| `OPENAI_TTS_MODEL` | `gpt-4o-mini-tts` | OpenAI TTS model (used if edge-tts fails) |
+| `OPENAI_TTS_VOICE` | `alloy` | OpenAI TTS voice |
+| `ENABLE_OPENAI_TTS_FALLBACK` | `true` | Fall back to OpenAI TTS when edge-tts fails |
+| `ENABLE_BACKGROUND_SCENE` | `true` | Enable YOLOv8n background scene detection |
 | `DATABASE_URL` | `sqlite:///./vision_assistant.db` | Database connection string |
 
-## Assumptions
+## API Endpoints
 
-- The evaluator's system has internet access (required for OpenAI API and edge-tts)
-- The faster-whisper model downloads automatically on first run (~74MB for `base`)
-- The browser is Chrome or Firefox (for WebSocket + AudioWorklet support)
-- HTTPS is not required for localhost development (getUserMedia works on localhost without HTTPS)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Component health (VAD, STT, vision API, TTS, DB) |
+| `WS` | `/ws/{session_id}` | Main WebSocket — audio/video/text stream |
+| `GET` | `/api/sessions` | List all conversation sessions |
+| `GET` | `/api/sessions/{id}/turns` | Conversation history for a session |
+| `GET` | `/dashboard/events` | SSE stream for real-time observability metrics |
 
-## Error Handling
+## Project Structure
 
-- **Camera unavailable**: Error displayed in UI; text-only mode continues
-- **OpenAI API error**: Error shown in chat with step identification (`vision_api`)
-- **Rate limiting (429)**: Logged with step name; user sees "error" event in chat
-- **WebSocket disconnect**: Automatic reconnect with exponential backoff
-- **Empty speech**: Ignored (VAD filters below threshold)
-- **Model download failure**: Logged with instructions to run `download_models.py`
+```
+vision-assistant/
+├── docker-compose.yml           # Orchestrates backend + frontend containers
+├── backend/
+│   ├── Dockerfile               # python:3.11-slim, downloads models at build time
+│   ├── main.py                  # FastAPI app + startup lifespan
+│   ├── config.py                # All configuration constants
+│   ├── dependencies.py          # Shared singleton resources
+│   ├── download_models.py       # Downloads ONNX + Whisper + YOLO models
+│   ├── pipeline/
+│   │   ├── vad_detector.py      # Silero VAD + SmartTurn EOU (ONNX)
+│   │   ├── audio_buffer.py      # Speech segmentation buffer
+│   │   ├── speech_detector.py   # VAD state machine
+│   │   ├── transcriber.py       # faster-whisper STT
+│   │   ├── vision_pipeline.py   # Per-session orchestrator
+│   │   ├── tts_handler.py       # edge-tts + OpenAI TTS fallback
+│   │   ├── scene_detector.py    # YOLOv8n background scene detection
+│   │   └── scene_state.py       # Scene state management
+│   ├── vision/
+│   │   └── openai_client.py     # gpt-4o-mini vision client + product catalogue
+│   ├── db/                      # SQLAlchemy models + CRUD
+│   ├── api/                     # WebSocket, sessions, dashboard endpoints
+│   ├── models/                  # ONNX model files (downloaded at build/startup)
+│   ├── .env.example             # Environment variable template
+│   └── requirements.txt
+├── frontend/
+│   ├── Dockerfile               # Node 20 builder → nginx:alpine, serves on port 80
+│   └── src/
+│       ├── hooks/               # useSession, audio pipeline, video capture
+│       ├── components/          # ConversationThread, MessageBubble, AudioVisualizer, MetricsDashboard
+│       └── workers/             # correlator.worklet.js (AudioWorklet)
+├── .gitignore
+└── README.md
+```
+
+## Extending the Product Catalogue
+
+Edit `PRODUCT_CATALOGUE` in [backend/vision/openai_client.py](backend/vision/openai_client.py). Each entry needs:
+- `Visual ID` — how the model identifies the product from the camera feed
+- Spec fields the assistant should use when answering questions
+
+## Dependencies
+
+### Backend
+| Package | Purpose |
+|---|---|
+| fastapi | Web framework |
+| uvicorn | ASGI server |
+| onnxruntime | VAD + EOU inference (Silero, SmartTurn) |
+| faster-whisper | Speech-to-text (CPU, cross-platform) |
+| transformers | Whisper feature extractor for EOU model |
+| openai | gpt-4o-mini vision API + OpenAI TTS |
+| Pillow | Image processing |
+| edge-tts | Primary TTS (free, no API key) |
+| pydub | MP3 → WAV conversion |
+| ultralytics | YOLOv8n background scene detection |
+| sqlalchemy | Database ORM |
+| python-dotenv | Environment variable loading |
+
+### Frontend
+| Package | Purpose |
+|---|---|
+| react 18 | UI framework |
+| vite | Build tool + dev server |
+| typescript | Type safety |
