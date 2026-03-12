@@ -55,11 +55,11 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("[startup] Transcriber failed to load: %s", e)
 
-    # Initialize OpenAI client
+    # Initialize OpenAI vision client
     if OPENAI_API_KEY:
         try:
             from vision.openai_client import OpenAIVisionClient
-            resources.gemini_client = OpenAIVisionClient()  # field name kept for interface compatibility
+            resources.vision_client = OpenAIVisionClient()
             logger.info("[startup] OpenAI vision client ready")
         except Exception as e:
             logger.error("[startup] OpenAI client failed: %s", e)

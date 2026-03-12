@@ -410,7 +410,7 @@ class VisionPipeline:
             tts_buffer = ""
             tts_delimiters = {".", "!", "?", "\n"}
 
-            async for chunk in self.resources.gemini_client.generate_streaming(self.conversation):
+            async for chunk in self.resources.vision_client.generate_streaming(self.conversation):
                 if cancel_event.is_set() or not self.detector.is_responding:
                     logger.info("[response] Interrupted mid-stream")
                     break
@@ -507,7 +507,7 @@ class VisionPipeline:
 
         except Exception as e:
             logger.error("[response] Error: %s", e, exc_info=True)
-            step = "vision_api" if "gemini" in str(type(self.resources.gemini_client)).lower() else "response"
+            step = "vision_api" if self.resources.vision_client else "response"
             try:
                 await self.ws.send_text(json.dumps({
                     "event": "error",

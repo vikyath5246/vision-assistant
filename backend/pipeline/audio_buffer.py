@@ -2,7 +2,6 @@
 Ported verbatim from offline-voice-ai/audio_buffer.py
 """
 import numpy as np
-import wave
 from typing import Optional, List
 from enum import Enum
 from config import CHUNK_SIZE, SAMPLE_RATE, SAFETY_CHUNKS_BEFORE
@@ -54,16 +53,6 @@ class AudioBuffer:
         self.active_segment = []
         self.is_capturing = False
         return segment
-
-
-def save_audio_to_wav(audio: np.ndarray, filename: str, sample_rate: int = SAMPLE_RATE):
-    audio_int16 = np.clip(audio, -1.0, 1.0)
-    audio_int16 = (audio_int16 * 32767).astype(np.int16)
-    with wave.open(filename, 'wb') as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(sample_rate)
-        f.writeframes(audio_int16.tobytes())
 
 
 def split_audio_into_chunks(audio: np.ndarray, chunk_size: int = CHUNK_SIZE) -> List[np.ndarray]:

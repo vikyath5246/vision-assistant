@@ -1,6 +1,7 @@
 """Voice Activity Detection and End-of-Utterance detection
 Ported verbatim from offline-voice-ai/vad_detector.py - cross-platform via onnxruntime
 """
+import logging
 import numpy as np
 import onnxruntime as ort
 from transformers import WhisperFeatureExtractor
@@ -10,17 +11,19 @@ from config import (
     EOU_MIN_SAMPLES, EOU_OPTIMAL_SAMPLES, EOU_CONFIDENCE_THRESHOLD
 )
 
+logger = logging.getLogger(__name__)
+
 
 class VADDetector:
     """Voice Activity Detection using Silero VAD"""
 
     def __init__(self, model_path: str = VAD_MODEL_PATH):
-        print(f"Loading VAD: {model_path}")
+        logger.info("Loading VAD: %s", model_path)
         self.session = ort.InferenceSession(model_path)
         self.state = np.zeros(VAD_STATE_SHAPE, dtype=np.float32)
         self.context = np.zeros((1, VAD_CONTEXT_SIZE), dtype=np.float32)
         self.smoothed_prob = 0.0
-        print("VAD loaded")
+        logger.info("VAD loaded")
 
     def process_chunk(self, chunk: np.ndarray) -> float:
         """Process audio chunk and return smoothed VAD probability"""
@@ -53,7 +56,7 @@ class EndOfUtteranceDetector:
     """Detect end of user utterance using ML model"""
 
     def __init__(self, model_path: str = EOU_MODEL_PATH):
-        print(f"Loading EOU: {model_path}")
+        logger.info("Loading EOU: %s", model_path)
 
         self.feature_extractor = WhisperFeatureExtractor(chunk_length=8)
 
@@ -64,7 +67,7 @@ class EndOfUtteranceDetector:
 
         self.session = ort.InferenceSession(model_path, sess_options=options)
         self.audio_buffer = np.array([], dtype=np.float32)
-        print("EOU loaded")
+        logger.info("EOU loaded")
 
     def add_audio(self, chunk: np.ndarray):
         """Add audio chunk to buffer"""
@@ -109,7 +112,7 @@ class EndOfUtteranceDetector:
             }
 
         except Exception as e:
-            print(f"EOU detection error: {e}")
+            logger.warning("EOU detection error: %s", e)
             return {'ended': False, 'confidence': 0.0}
 
     def reset(self):

@@ -119,6 +119,3 @@ class EdgeTTSHandler:
         logger.error("[tts] no audio generated from TTS pipeline (edge and fallback failed)")
         return b""
 
-    def generate_speech(self, text: str) -> bytes:
-        """Synchronous wrapper for use in run_in_executor"""
-        return asyncio.run(self.generate_speech_async(text))

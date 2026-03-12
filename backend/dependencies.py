@@ -8,15 +8,15 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-# Cache Gemini health check for 30s to avoid hammering the API on every /health poll
-_GEMINI_HEALTH_CACHE: dict = {"status": None, "checked_at": 0}
+# Cache vision API health check for 30s to avoid hammering the API on every /health poll
+_VISION_API_HEALTH_CACHE: dict = {"status": None, "checked_at": 0}
 
 
 @dataclass
 class AppResources:
     """Singleton container for all shared ML/DB resources"""
     transcriber: object = None          # FasterWhisperTranscriber
-    gemini_client: object = None        # GeminiVisionClient (or OpenAI client)
+    vision_client: object = None        # OpenAIVisionClient
     tts_handler: object = None          # EdgeTTSHandler
     scene_detector: object = None       # SceneDetector (YOLOv8n)
     db_session: object = None           # SQLAlchemy SessionLocal callable
@@ -35,17 +35,17 @@ class AppResources:
         else:
             status["transcriber"] = "disabled"
 
-        # Gemini - cached health check (avoid API call on every /health poll)
-        if self.gemini_client is not None:
+        # Vision API - cached health check (avoid API call on every /health poll)
+        if self.vision_client is not None:
             now = time.monotonic()
-            if now - _GEMINI_HEALTH_CACHE["checked_at"] > 30:
+            if now - _VISION_API_HEALTH_CACHE["checked_at"] > 30:
                 try:
-                    reachable = self.gemini_client.is_reachable()
-                    _GEMINI_HEALTH_CACHE["status"] = "ok" if reachable else "unreachable"
+                    reachable = self.vision_client.is_reachable()
+                    _VISION_API_HEALTH_CACHE["status"] = "ok" if reachable else "unreachable"
                 except Exception as e:
-                    _GEMINI_HEALTH_CACHE["status"] = f"error: {str(e)[:60]}"
-                _GEMINI_HEALTH_CACHE["checked_at"] = now
-            status["vision_api"] = _GEMINI_HEALTH_CACHE["status"] or "checking"
+                    _VISION_API_HEALTH_CACHE["status"] = f"error: {str(e)[:60]}"
+                _VISION_API_HEALTH_CACHE["checked_at"] = now
+            status["vision_api"] = _VISION_API_HEALTH_CACHE["status"] or "checking"
         else:
             status["vision_api"] = "not_configured"
 

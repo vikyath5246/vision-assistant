@@ -16,9 +16,13 @@ Rather than streaming video frames continuously (which would be expensive in ban
 1. VAD detects speech end → transcription completes
 2. Server sends `{ event: "capture_frame" }` to the client
 3. Client grabs the current canvas frame as JPEG (640×480, quality 0.7, ~30–80KB) and sends it back
-4. Server waits up to 2 seconds, then proceeds with or without the frame
+4. Server waits up to 3 seconds, then proceeds with or without the frame
 
 **Why this timing?** Capturing after transcription (not at speech-end) is more accurate. The user continues pointing at the object during the 300–1500ms transcription window. This yields a more relevant frame with no continuous video bandwidth cost.
+
+### Background scene frames (continuous)
+
+In addition to on-demand frame capture, the `useVideoCapture` hook pushes a JPEG frame to the backend every 1.5 seconds as `{ event: "scene_frame" }`. The server runs YOLOv8n inference on these frames in a fire-and-forget task to maintain a live scene state and send annotation overlays back to the frontend.
 
 ### Audio: Real-time 32ms chunks
 
@@ -44,7 +48,7 @@ Microphone audio is captured at 16kHz via `ScriptProcessorNode`, split into 512-
 
 **Alternatives considered:**
 - gpt-4o: Higher quality but ~10× more expensive per token. Unnecessary for typical trade show Q&A.
-- Gemini 1.5 Flash: Has a free tier but the Python SDK doesn't support native async streaming (requires `run_in_executor` workaround).
+- Gemini 1.5 Flash: Was the original implementation but replaced — the Python SDK doesn't support native async streaming (requires `run_in_executor` workaround), and OpenAI's API better fits the existing TTS stack.
 - Local VLM (e.g., LLaVA, Moondream): No API cost, but requires GPU for reasonable speed. Not portable to evaluator's system.
 
 ### Latency impact
@@ -55,7 +59,7 @@ gpt-4o-mini typically streams the first token in 0.5–1.5 seconds for short pro
 
 - Network errors: Caught in `_generate_response`, logged with `step="vision_api"`, client receives `{ event: "error", step: "vision_api" }`
 - Rate limiting (429): Same error path; structured log makes it identifiable
-- Timeout: `asyncio.wait_for` on frame request (2s); OpenAI streaming has built-in timeout via the SDK
+- Timeout: `asyncio.wait_for` on frame request (3s); OpenAI streaming has built-in timeout via the SDK
 
 ### Image cost control
 
@@ -69,11 +73,11 @@ Only the **last 3 image turns** are included in API calls (`MAX_CONVERSATION_IMA
 
 `navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000 } })` captures mono 16kHz audio. A `ScriptProcessorNode` (512 samples per callback) accumulates samples and sends them over WebSocket.
 
-An `AudioWorklet` (`correlator.worklet.js`) runs alongside to calculate microphone/TTS correlation for **barge-in detection**: if the user speaks while the bot is playing TTS audio, the correlation is high, indicating the user wants to interrupt.
+An `AudioWorklet` (`correlator.worklet.js`) runs alongside to calculate microphone/TTS correlation for **barge-in detection**: processes 480-sample frames at 48kHz, computing signal correlation and RMS for both mic and TTS reference. If `corr > 0.3 && micRms > 0.01` while the bot is speaking, it sends `{ event: "interrupt" }` to the backend and stops local TTS playback immediately. Gracefully degrades if AudioWorklet is unavailable (no echo correlation, barge-in still possible via VAD).
 
 ### Speech detection (server)
 
-The server uses a two-stage pipeline ported from the reference `offline-voice-ai` codebase:
+The server uses a two-stage pipeline:
 
 **Stage 1 — Silero VAD (ONNX)**: Processes each 32ms chunk with a stateful ONNX model. Returns a smoothed probability (0–1). State machine transitions: QUIET → STARTING → SPEAKING → STOPPING.
 
@@ -88,10 +92,20 @@ This two-stage approach prevents premature turn-taking on mid-sentence pauses, w
 **Why not cloud STT (Deepgram, AssemblyAI, Google)?**
 - Cost: Cloud STT adds per-minute charges
 - Latency: Similar to local for short utterances; adds network RTT
-- Offline: Local works without internet (fallback if Gemini API is down)
+- Offline: Local works without internet
 - Cross-platform: faster-whisper works on any CPU with no GPU required
 
-**Thread safety**: `faster-whisper` is thread-safe when called from `run_in_executor`. No global lock is needed (unlike the reference's MLX-based Whisper).
+**Thread safety**: `faster-whisper` is thread-safe when called from `run_in_executor`. No global lock is needed.
+
+### Text-to-Speech (TTS)
+
+**Primary:** `edge-tts` (Microsoft Edge TTS, free, no API key required). Voice: `en-US-GuyNeural` (male). Fallback voice: `en-US-ChristopherNeural`.
+
+**Fallback:** OpenAI TTS (`gpt-4o-mini-tts`) when edge-tts fails and `OPENAI_API_KEY` is set.
+
+**Delivery:** Responses are streamed sentence-by-sentence. Each sentence is converted to WAV (MP3 → WAV via pydub) and sent as `{ event: "media", mime: "audio/wav", audio: "<base64>", index: N }`. Index `0` signals the start of a new response and resets the client's playback queue.
+
+**Client playback:** `useTTSPlayback` maintains an ordered WAV queue decoded via the Web Audio API. Chunks play sequentially; `index=0` clears any in-progress audio from the previous response. Browser SpeechSynthesis (`useStreamingSpeech`) is present but disabled due to a Chrome 15-second utterance limit bug.
 
 ---
 
@@ -101,37 +115,58 @@ This two-stage approach prevents premature turn-taking on mid-sentence pauses, w
 
 ```
 App (root state machine)
-├── StatusBar         — connection status, speech state badge
+├── StatusBar           — connection status, speech state badge
+├── MediaControls       — mic and camera toggle buttons (shown when active)
 ├── [Left panel]
-│   ├── VideoPreview  — live webcam feed + frame capture flash
+│   ├── VideoPreview    — live webcam feed + YOLO annotation overlay + capture flash
 │   ├── AudioVisualizer — VAD probability bar (updates 30fps via state events)
-│   ├── StartButton   — Start/Stop toggle
-│   └── MetricsDashboard — collapsible panel, SSE-fed
+│   ├── StartButton     — Start/Stop toggle
+│   └── MetricsDashboard — collapsible panel, SSE-fed latency + health
 └── [Right panel]
     └── ConversationThread → MessageBubble[]
 ```
 
+### Hooks
+
+| Hook | Responsibility |
+|---|---|
+| `useWebSocket` | Single socket per session, exponential backoff reconnect (1s→10s), event handler registry |
+| `useSession` | Session ID generation/retrieval via `sessionStorage` (per-tab, no cross-tab collision) |
+| `useAudioPipeline` | Mic capture → AudioWorklet → 512-sample chunks over WebSocket |
+| `useTTSPlayback` | WAV queue playback via Web Audio API, ordered by index |
+| `useConversation` | Message state: partial → complete (user), streaming → complete (assistant) |
+| `useVideoCapture` | Camera stream, on-demand frame capture, 1.5s background scene frame push |
+| `useAnnotations` | YOLO bounding boxes on overlay canvas; flips x-coords for mirrored video; clears after 3s |
+| `useStreamingSpeech` | Browser SpeechSynthesis wrapper — present but disabled (Chrome 15s bug) |
+
 ### Start/Stop flow
 
 1. User clicks "Start Conversation"
-2. `startCamera()` requests `getUserMedia({ video })` → browser permission prompt
-3. `startListening()` requests `getUserMedia({ audio })` → streams 32ms chunks to server
-4. Server sends `{ event: "start" }` acknowledgement
+2. `startCamera()` and `startListening()` run in parallel (browser permission prompts)
+3. `startSceneFramePush()` begins sending frames every 1.5s for YOLO
+4. `{ event: "start" }` sent to backend
 5. `vadProb` + `speechState` update in real-time via `state` events
 
-Stop: sends `{ event: "stop" }` to server, releases both media streams.
+Stop: sends `{ event: "stop" }`, stops scene push, releases both media streams, stops TTS playback.
 
 ### Chat state management
 
-The `useConversation` hook maintains `Message[]` state. Messages flow through three stages:
+The `useConversation` hook maintains `Message[]` state. Messages flow through stages:
 - **Partial** (user, `partial: true`): shown italic/dimmed, updated in real-time during transcription
 - **Complete user** (`complete: true`): replaces partial, full opacity
-- **Streaming assistant** (`streaming: true`): appended sentence-by-sentence as Gemini streams
+- **Streaming assistant** (`streaming: true`): appended sentence-by-sentence as the model streams
 - **Complete assistant** (`complete: true`): finalized, streaming indicator removed
+- On interrupt: active streaming message marked non-streaming immediately
 
 ### Video display
 
-The `<video>` element is mirrored horizontally (`transform: scaleX(-1)`) for a natural selfie view. A hidden `<canvas>` is used to capture frames on demand without interrupting playback.
+The `<video>` element is mirrored horizontally (`transform: scaleX(-1)`) for a natural selfie view. A hidden `<canvas>` captures frames on demand without interrupting playback. An overlay canvas draws YOLO bounding boxes (x-coordinates flipped to match the mirrored video).
+
+### TTS mode
+
+The backend supports two TTS modes set via `{ event: "config", tts_mode: "server"|"client" }`:
+- **server** (default): backend generates WAV and streams it over WebSocket
+- **client**: backend skips TTS; browser handles speech (currently disabled)
 
 ---
 
@@ -147,17 +182,21 @@ interface ConversationTurn {
 }
 ```
 
-Visual context is stored inline with the turn. Only the last `MAX_CONVERSATION_IMAGE_HISTORY=3` frames are sent to Gemini (older turns are text-only in the API request).
+Visual context is stored inline with the turn. Only the last `MAX_CONVERSATION_IMAGE_HISTORY=3` frames are sent to the vision API (older turns are text-only in the API request). **Frames are not persisted to disk** — they exist only in the in-memory conversation context during a session.
 
 ### Persistent storage (SQLite)
 
 ```sql
 sessions: id (UUID), title, created_at, updated_at
-turns: id, session_id FK, role, content, frame_path,
+turns: id, session_id FK, role, content, frame_path (unused, always null),
        stt_latency_ms, llm_first_token_ms, tts_first_audio_ms, created_at
 ```
 
-Frames are stored as JPEG files on disk (`data/frames/{session_id}/frame_{ts}.jpg`) rather than as BLOBs — keeps the DB file fast and small.
+The `frame_path` column exists in the schema but is never written — frame storage was removed in favour of keeping inference in-memory only.
+
+### Background scene detection
+
+`SceneDetector` (YOLOv8n) runs stateless in-memory inference on each client-pushed background frame. Results are sent immediately as `{ event: "annotations", boxes: [...] }` to the frontend and used to augment the LLM prompt with scene context. No scene data is written to disk or the database.
 
 ### Scaling to hundreds of concurrent conversations
 
@@ -165,8 +204,7 @@ The current architecture would need:
 1. **PostgreSQL** (replace SQLite — concurrent writes, connection pooling)
 2. **Redis** for session state (replace `app.state.active_sessions` dict)
 3. **Horizontal scaling**: VAD/EOU per-session state is stateful — would need sticky sessions or session state pushed to Redis
-4. **Frame storage**: S3 or similar object storage instead of local disk
-5. **Whisper worker pool**: dedicated transcription workers with a work queue (Celery/RQ) rather than per-session `run_in_executor`
+4. **Whisper worker pool**: dedicated transcription workers with a work queue (Celery/RQ) rather than per-session `run_in_executor`
 
 ---
 
@@ -174,7 +212,7 @@ The current architecture would need:
 
 ### Structured logging
 
-Every log line includes: timestamp, log level, module name, and step name (e.g., `[transcribe]`, `[response]`, `[gemini]`). This makes it possible to grep for a specific step's failures.
+Every log line includes: timestamp, log level, module name, and step name (e.g., `[transcribe]`, `[response]`, `[openai]`). This makes it possible to grep for a specific step's failures.
 
 Example log trace for one turn:
 ```
@@ -184,9 +222,15 @@ Example log trace for one turn:
 [INFO] pipeline.speech_detector: [detector] Segment captured (3.84s)
 [INFO] pipeline.vision_pipeline: [transcribe] #1: 'What is this?' (843ms)
 [INFO] pipeline.vision_pipeline: [pipeline] Frame received (42156 bytes)
-[INFO] vision.gemini_client: [gemini] First chunk in 1.23s
+[INFO] vision.openai_client: [openai] First chunk in 1.23s
 [INFO] pipeline.vision_pipeline: [response] Complete (first_llm=1.23s)
 ```
+
+### MetricsDashboard
+
+The `MetricsDashboard` frontend component displays real-time observability data sourced from two endpoints:
+- `GET /health`: per-component status (vad, transcriber, vision_api, tts, database)
+- `GET /dashboard/events` (SSE): streams `turn_complete` events with per-turn STT, LLM first-token, and TTS first-audio latencies, plus active session list
 
 ### Health endpoint
 
@@ -221,9 +265,9 @@ Steps: `websocket`, `transcriber`, `vision_api`, `tts`, `response`
 
 - **End-to-end latency**: speech_end → first assistant text token (target <2s)
 - **STT P95 latency**: target <1.5s for 5s utterances
-- **Gemini P95 latency**: target <3s
+- **Vision API P95 latency**: target <3s
 - **WebSocket connection error rate**: target <0.1%
-- **Gemini 429 rate**: indicates free tier saturation
+- **OpenAI 429 rate**: indicates rate limit saturation
 - **Frame capture timeout rate**: indicates camera/network issues
 
 ---
@@ -234,12 +278,10 @@ With two more weeks, in order of priority:
 
 1. **WebRTC for audio**: Replace the `ScriptProcessorNode` WebSocket approach with WebRTC + a lightweight SFU. This would give native echo cancellation, jitter buffer management, and better codec support (Opus). The current approach can have dropouts under heavy CPU load.
 
-2. **Streaming Gemini via native async**: The current `generate_streaming` wraps a synchronous Gemini SDK call in `run_in_executor`. The official Gemini SDK doesn't yet support native async streaming. I would switch to the REST API with `aiohttp` to avoid blocking the thread pool during streaming.
+2. **Whisper VAD filter**: Re-enable `vad_filter=True` in faster-whisper for cases where the Silero VAD occasionally captures noise segments. This would reduce spurious transcriptions and wasted API calls.
 
-3. **Whisper VAD filter**: Re-enable `vad_filter=True` in faster-whisper for cases where the Silero VAD occasionally captures noise segments. This would reduce spurious transcriptions and wasted Gemini API calls.
+3. **Better error recovery**: The current error handler always yields a generic message. With more time, I'd add retry logic with exponential backoff for transient errors (5xx, timeout) while surfacing permanent errors (invalid key, quota exceeded) clearly.
 
-4. **Better error recovery**: The current Gemini error handler always yields a generic message. With more time, I'd add retry logic with exponential backoff for transient errors (5xx, timeout) while surfacing permanent errors (invalid key, quota exceeded) clearly.
+4. **Frame quality adaptation**: Currently frames are always 640×480 JPEG at quality 0.7. For objects that need fine detail (small text, serial numbers), I'd implement a "zoom mode" that captures a higher-quality crop of the center of the frame.
 
-5. **Frame quality adaptation**: Currently frames are always 640×480 JPEG at quality 0.7. For objects that need fine detail (small text, serial numbers), I'd implement a "zoom mode" that captures a higher-quality crop of the center of the frame.
-
-6. **Session restoration**: The DB stores conversation history, but when the frontend reconnects, it currently only restores text context (not images). With more time, I'd cache the last N frames on the server and include them in the restored context.
+5. **Session restoration**: The DB stores conversation history, but when the frontend reconnects, it currently only restores text context (not images). With more time, I'd cache the last N frames on the server and include them in the restored context.
