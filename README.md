@@ -37,6 +37,7 @@ Webcam ────────────────────────�
 - A webcam and microphone
 - Internet connection (for OpenAI API and edge-tts)
 - **Docker** (recommended) — or Python 3.10+ and Node.js 18+ for manual setup
+- Create an .env file from the example and add your OpenAI API key there.
 
 ## Setup
 
