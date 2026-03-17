@@ -5,6 +5,7 @@ FROM python:3.11-slim
 #   libsndfile1 — required by soundfile
 #   curl        — used by the compose healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
     ffmpeg \
     libsndfile1 \
     curl \
@@ -23,6 +24,9 @@ RUN python download_models.py
 
 # Copy the rest of the application source
 COPY . .
+
+# Ensure the entrypoint script is executable (fixes Windows -> Docker permission issues)
+RUN chmod +x entrypoint.sh
 
 EXPOSE 8000
 
