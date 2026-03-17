@@ -25,8 +25,9 @@ RUN python download_models.py
 # Copy the rest of the application source
 COPY . .
 
-# Ensure the entrypoint script is executable (fixes Windows -> Docker permission issues)
-RUN chmod +x entrypoint.sh
+# Ensure the entrypoint script is executable and has Unix line endings
+# (fixes Windows CRLF -> Docker issues)
+RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
 EXPOSE 8000
 
